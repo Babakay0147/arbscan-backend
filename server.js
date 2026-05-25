@@ -7,7 +7,7 @@ app.use(cors());
 app.use(express.json());
 
 const PORT = process.env.PORT || 4000;
-const API_KEY = process.env.ODDSPAPI_KEY || "YOUR_ODDSPAPI_KEY";
+const API_KEY = process.env.ODDSPAPI_KEY || "b8556587-8ef8-4025-adf5-6d730b50265e";
 const BASE = "https://api.oddspapi.io/v4";
 
 let cache = { data: [], timestamp: 0 };
