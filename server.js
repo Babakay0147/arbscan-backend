@@ -7,135 +7,120 @@ app.use(cors());
 app.use(express.json());
 
 const PORT = process.env.PORT || 4000;
-const API_KEY = process.env.ODDSPAPI_KEY || "b8556587-8ef8-4025-adf5-6d730b50265e";
-const BASE = "https://api.oddspapi.io/v4";
+const ODDS_API_KEY = process.env.ODDS_API_KEY || "0b5c91e63d26cb27f6884afdd1df0e86";
+const ODDS_BASE = "https://api.the-odds-api.com/v4";
 
 let cache = { data: [], timestamp: 0 };
-const CACHE_TTL = 60 * 1000;
+const CACHE_TTL = 120 * 1000; // 2 min cache to save requests
 
-// ─── BOOKMAKERS TO COMPARE ───────────────────────────────────────────────────
-// These are bookmakers available on OddsPapi - we compare across them for arb
-const BOOKMAKERS = ["pinnacle","bet365","unibet","bwin","williamhill","betway","1xbet","betfair","sbobet","marathonbet"];
-
-// ─── SPORT IDs on OddsPapi ───────────────────────────────────────────────────
-// 10 = Football, 12 = Basketball, 13 = Tennis, 9 = Cricket
+// Sports to scan
 const SPORTS = [
-  { id: 10, name: "Football", threeWay: true },
-  { id: 12, name: "Basketball", threeWay: false },
-  { id: 13, name: "Tennis", threeWay: false },
-  { id: 9,  name: "Cricket", threeWay: false },
+  { key: "soccer_epl",              name: "Football",   threeWay: true },
+  { key: "soccer_spain_la_liga",    name: "Football",   threeWay: true },
+  { key: "soccer_italy_serie_a",    name: "Football",   threeWay: true },
+  { key: "soccer_germany_bundesliga", name: "Football", threeWay: true },
+  { key: "soccer_uefa_champs_league", name: "Football", threeWay: true },
+  { key: "soccer_africa_cup_of_nations", name: "Football", threeWay: true },
+  { key: "basketball_nba",          name: "Basketball", threeWay: false },
+  { key: "tennis_atp_french_open",  name: "Tennis",     threeWay: false },
+  { key: "cricket_icc_world_cup",   name: "Cricket",    threeWay: false },
 ];
 
-// Market IDs: 101=1X2 home, 102=draw, 103=away, 104=over, 105=under
-const MARKET_1X2 = "101";
-const MARKET_OU  = "104";
+// Bookmakers to compare
+const BOOKMAKERS = "bet365,pinnacle,williamhill,unibet,betway,betfair,1xbet,marathonbet,bwin,unibet";
 
-// ─── FETCH TOURNAMENTS ───────────────────────────────────────────────────────
-async function getTournaments(sportId) {
+// ─── FETCH ODDS FOR ONE SPORT ─────────────────────────────────────────────────
+async function fetchSportOdds(sport) {
+  const results = [];
   try {
-    const res = await axios.get(`${BASE}/tournaments`, {
-      params: { sportId, apiKey: API_KEY },
-      timeout: 12000,
-    });
-    // Return top tournaments that have upcoming fixtures
-    return (res.data || [])
-      .filter(t => (t.upcomingFixtures > 0 || t.futureFixtures > 0))
-      .slice(0, 6)
-      .map(t => t.tournamentId);
-  } catch (e) {
-    console.error(`Tournaments sport ${sportId}:`, e.response?.status || e.message);
-    return [];
-  }
-}
-
-// ─── FETCH ODDS FOR MULTIPLE BOOKMAKERS ──────────────────────────────────────
-async function getOddsForTournaments(tournamentIds, bookmaker) {
-  if (!tournamentIds.length) return [];
-  try {
-    const res = await axios.get(`${BASE}/odds-by-tournaments`, {
+    const res = await axios.get(`${ODDS_BASE}/sports/${sport.key}/odds`, {
       params: {
-        bookmaker,
-        tournamentIds: tournamentIds.join(","),
-        apiKey: API_KEY,
+        apiKey: ODDS_API_KEY,
+        regions: "eu,uk",
+        markets: "h2h,totals",
         oddsFormat: "decimal",
+        bookmakers: BOOKMAKERS,
       },
       timeout: 15000,
     });
-    return res.data || [];
+
+    const events = res.data || [];
+    console.log(`  ${sport.key}: ${events.length} events`);
+
+    for (const ev of events) {
+      for (const bookie of (ev.bookmakers || [])) {
+        const bookieName = bookie.title || bookie.key;
+        const markets = {};
+
+        for (const mkt of (bookie.markets || [])) {
+          if (mkt.key === "h2h") {
+            const outcomes = mkt.outcomes || [];
+            const h2h = {};
+            for (const o of outcomes) {
+              const name = o.name?.toLowerCase();
+              if (name === ev.home_team?.toLowerCase() || name === "home") h2h.home = parseFloat(o.price);
+              else if (name === "draw") h2h.draw = parseFloat(o.price);
+              else if (name === ev.away_team?.toLowerCase() || name === "away") h2h.away = parseFloat(o.price);
+            }
+            // fallback by position
+            if (!h2h.home && outcomes[0]) h2h.home = parseFloat(outcomes[0].price);
+            if (!h2h.draw && outcomes.length === 3 && outcomes[1]) h2h.draw = parseFloat(outcomes[1].price);
+            if (!h2h.away && outcomes[outcomes.length-1]) h2h.away = parseFloat(outcomes[outcomes.length-1].price);
+            if (h2h.home && h2h.away) markets.h2h = h2h;
+          }
+          if (mkt.key === "totals") {
+            const outcomes = mkt.outcomes || [];
+            const ou = {};
+            for (const o of outcomes) {
+              if (o.name?.toLowerCase().includes("over"))  ou.over  = parseFloat(o.price);
+              if (o.name?.toLowerCase().includes("under")) ou.under = parseFloat(o.price);
+            }
+            if (ou.over && ou.under) markets.ou = ou;
+          }
+        }
+
+        if (markets.h2h?.home && markets.h2h?.away) {
+          results.push({
+            fixtureId: ev.id,
+            bookie: bookieName,
+            sport: sport.name,
+            home: ev.home_team,
+            away: ev.away_team,
+            commenceTime: ev.commence_time,
+            h2h: markets.h2h,
+            ou: markets.ou || null,
+          });
+        }
+      }
+    }
   } catch (e) {
-    console.error(`Odds [${bookmaker}]:`, e.response?.status || e.message);
-    return [];
+    if (e.response?.status === 422) {
+      console.log(`  ${sport.key}: not available right now`);
+    } else {
+      console.error(`  ${sport.key} error:`, e.response?.status || e.message);
+    }
   }
-}
-
-// ─── FETCH PARTICIPANTS (team names) ─────────────────────────────────────────
-let participantCache = {};
-async function getParticipantName(participantId) {
-  if (participantCache[participantId]) return participantCache[participantId];
-  try {
-    const res = await axios.get(`${BASE}/participants`, {
-      params: { participantIds: participantId, apiKey: API_KEY },
-      timeout: 8000,
-    });
-    const p = (res.data || [])[0];
-    if (p?.participantName) {
-      participantCache[participantId] = p.participantName;
-      return p.participantName;
-    }
-  } catch (e) {}
-  return `Team ${participantId}`;
-}
-
-// ─── PARSE ODDS FROM FIXTURE ──────────────────────────────────────────────────
-function parseFixtureOdds(fixture, bookmaker, sportName) {
-  try {
-    const bookOdds = fixture.bookmakerOdds?.[bookmaker];
-    if (!bookOdds?.bookmakerIsActive) return null;
-
-    const markets = bookOdds.markets || {};
-    const result = { h2h: null, ou: null };
-
-    // 1X2 market (101=home, 102=draw, 103=away)
-    if (markets["101"]) {
-      const h2h = {};
-      const outcomes = markets["101"].outcomes || {};
-      h2h.home = parseFloat(outcomes["101"]?.players?.["0"]?.price) || null;
-      h2h.draw = parseFloat(outcomes["102"]?.players?.["0"]?.price) || null;
-      h2h.away = parseFloat(outcomes["103"]?.players?.["0"]?.price) || null;
-      if (h2h.home && h2h.away) result.h2h = h2h;
-    }
-
-    // Over/Under market (104=over, 105=under)
-    if (markets["104"]) {
-      const ou = {};
-      const outcomes = markets["104"].outcomes || {};
-      ou.over  = parseFloat(outcomes["104"]?.players?.["0"]?.price) || null;
-      ou.under = parseFloat(outcomes["105"]?.players?.["0"]?.price) || null;
-      if (ou.over && ou.under) result.ou = ou;
-    }
-
-    return result;
-  } catch (e) {
-    return null;
-  }
-}
-
-// ─── TEAM NAME NORMALIZER ─────────────────────────────────────────────────────
-function normalize(name = "") {
-  return name.toLowerCase()
-    .replace(/\b(fc|cf|sc|ac|afc|united|utd|city|town|athletic|atletico|sporting|real|club)\b/gi, "")
-    .replace(/[^a-z0-9]/g, "").trim();
+  return results;
 }
 
 // ─── ARB FINDER ───────────────────────────────────────────────────────────────
 function findArb(allOdds) {
-  // Group by fixtureId across bookmakers
+  // Group by fixtureId
   const byFixture = {};
   for (const odd of allOdds) {
-    const key = odd.fixtureId;
-    if (!byFixture[key]) byFixture[key] = { ...odd, bookOdds: {}, ouOdds: {} };
-    if (odd.h2h) byFixture[key].bookOdds[odd.bookie] = odd.h2h;
-    if (odd.ou)  byFixture[key].ouOdds[odd.bookie] = odd.ou;
+    if (!byFixture[odd.fixtureId]) {
+      byFixture[odd.fixtureId] = {
+        fixtureId: odd.fixtureId,
+        sport: odd.sport,
+        home: odd.home,
+        away: odd.away,
+        commenceTime: odd.commenceTime,
+        bookOdds: {},
+        ouOdds: {},
+      };
+    }
+    if (odd.h2h) byFixture[odd.fixtureId].bookOdds[odd.bookie] = odd.h2h;
+    if (odd.ou)  byFixture[odd.fixtureId].ouOdds[odd.bookie]   = odd.ou;
   }
 
   const results = [];
@@ -167,7 +152,10 @@ function findArb(allOdds) {
         if (odds.under > bUnder.odds) bUnder = { odds: odds.under, bookie };
       }
       const ouSum = 1/bOver.odds + 1/bUnder.odds;
-      if (ouSum < 1) ouArb = { bestOver: bOver, bestUnder: bUnder, sumInverse: ouSum, profitPct: ((1-ouSum)/ouSum)*100 };
+      if (ouSum < 1) ouArb = {
+        bestOver: bOver, bestUnder: bUnder,
+        sumInverse: ouSum, profitPct: ((1-ouSum)/ouSum)*100,
+      };
     }
 
     results.push({
@@ -175,6 +163,7 @@ function findArb(allOdds) {
       sport: ev.sport,
       home: ev.home,
       away: ev.away,
+      commenceTime: ev.commenceTime,
       isThreeWay,
       bookOdds: ev.bookOdds,
       bestHome, bestDraw, bestAway,
@@ -188,53 +177,21 @@ function findArb(allOdds) {
   return results.sort((a, b) => b.profitPct - a.profitPct);
 }
 
-// ─── MAIN SCRAPE ──────────────────────────────────────────────────────────────
-async function scrapeAll() {
-  console.log("\n🔍 Fetching from OddsPapi...");
+// ─── MAIN FETCH ───────────────────────────────────────────────────────────────
+async function fetchAll() {
+  console.log("\n🔍 Fetching from The Odds API...");
   const allOdds = [];
 
+  // Fetch sports in batches to save API requests
   for (const sport of SPORTS) {
-    try {
-      // Get top tournaments for this sport
-      const tournamentIds = await getTournaments(sport.id);
-      if (!tournamentIds.length) { console.log(`  ${sport.name}: no tournaments`); continue; }
-      console.log(`  ${sport.name}: ${tournamentIds.length} tournaments`);
-
-      // Fetch odds from each bookmaker in parallel
-      const bookieResults = await Promise.allSettled(
-        BOOKMAKERS.map(bk => getOddsForTournaments(tournamentIds, bk))
-      );
-
-      for (let i = 0; i < BOOKMAKERS.length; i++) {
-        const bookie = BOOKMAKERS[i];
-        const fixtures = bookieResults[i].status === "fulfilled" ? bookieResults[i].value : [];
-
-        for (const fixture of fixtures) {
-          const parsed = parseFixtureOdds(fixture, bookie, sport.name);
-          if (!parsed?.h2h) continue;
-
-          // Get team names (use cache to avoid repeated calls)
-          const home = await getParticipantName(fixture.participant1Id);
-          const away = await getParticipantName(fixture.participant2Id);
-
-          allOdds.push({
-            fixtureId: fixture.fixtureId,
-            bookie,
-            sport: sport.name,
-            home,
-            away,
-            h2h: parsed.h2h,
-            ou: parsed.ou,
-          });
-        }
-      }
-    } catch (e) {
-      console.error(`Sport ${sport.name}:`, e.message);
-    }
+    const odds = await fetchSportOdds(sport);
+    allOdds.push(...odds);
+    // small delay between requests
+    await new Promise(r => setTimeout(r, 300));
   }
 
   const bookiesFound = [...new Set(allOdds.map(o => o.bookie))];
-  console.log(`✅ ${allOdds.length} odds entries from: ${bookiesFound.join(", ") || "none"}`);
+  console.log(`✅ ${allOdds.length} odds from: ${bookiesFound.join(", ") || "none"}`);
 
   const result = findArb(allOdds);
   console.log(`⚡ ${result.length} markets | ${result.filter(o=>o.isArb).length} 1X2 arb | ${result.filter(o=>o.ouArb).length} O/U arb\n`);
@@ -242,14 +199,19 @@ async function scrapeAll() {
 }
 
 // ─── ROUTES ───────────────────────────────────────────────────────────────────
-app.get("/health", (req, res) => res.json({ status: "ok", time: new Date().toISOString(), version: "4.0" }));
+app.get("/health", (req, res) => res.json({
+  status: "ok",
+  time: new Date().toISOString(),
+  version: "5.0",
+  provider: "The Odds API",
+}));
 
 app.get("/odds", async (req, res) => {
   try {
     const now = Date.now();
     if (cache.data.length && now - cache.timestamp < CACHE_TTL)
       return res.json({ success: true, data: cache.data, cached: true, age: Math.round((now-cache.timestamp)/1000)+"s" });
-    const data = await scrapeAll();
+    const data = await fetchAll();
     cache = { data, timestamp: now };
     res.json({ success: true, data, cached: false, count: data.length });
   } catch (e) {
@@ -262,7 +224,7 @@ app.get("/arb", async (req, res) => {
     const now = Date.now();
     if (cache.data.length && now - cache.timestamp < CACHE_TTL)
       return res.json({ success: true, data: cache.data.filter(o=>o.isArb), cached: true });
-    const data = await scrapeAll();
+    const data = await fetchAll();
     cache = { data, timestamp: now };
     res.json({ success: true, data: data.filter(o=>o.isArb), count: data.filter(o=>o.isArb).length });
   } catch (e) {
@@ -271,6 +233,6 @@ app.get("/arb", async (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`\n🚀 ARBSCAN v4.0 — OddsPapi powered`);
-  console.log(`   300+ bookmakers | Football, Basketball, Tennis, Cricket\n`);
+  console.log(`\n🚀 ARBSCAN v5.0 — The Odds API powered`);
+  console.log(`   Bet365 | Pinnacle | William Hill | Unibet | Betway | 1xBet\n`);
 });
