@@ -13,17 +13,41 @@ const ODDS_BASE = "https://api.the-odds-api.com/v4";
 let cache = { data: [], timestamp: 0 };
 const CACHE_TTL = 120 * 1000; // 2 min cache to save requests
 
-// Sports to scan
+// Sports to scan — all active sports with best arb potential
 const SPORTS = [
-  { key: "soccer_epl",              name: "Football",   threeWay: true },
-  { key: "soccer_spain_la_liga",    name: "Football",   threeWay: true },
-  { key: "soccer_italy_serie_a",    name: "Football",   threeWay: true },
-  { key: "soccer_germany_bundesliga", name: "Football", threeWay: true },
-  { key: "soccer_uefa_champs_league", name: "Football", threeWay: true },
-  { key: "soccer_africa_cup_of_nations", name: "Football", threeWay: true },
-  { key: "basketball_nba",          name: "Basketball", threeWay: false },
-  { key: "tennis_atp_french_open",  name: "Tennis",     threeWay: false },
-  { key: "cricket_icc_world_cup",   name: "Cricket",    threeWay: false },
+  // ⚽ Football — most arb opportunities
+  { key: "soccer_fifa_world_cup",             name: "Football",   threeWay: true },
+  { key: "soccer_uefa_champs_league",         name: "Football",   threeWay: true },
+  { key: "soccer_uefa_europa_conference_league", name: "Football",threeWay: true },
+  { key: "soccer_brazil_campeonato",          name: "Football",   threeWay: true },
+  { key: "soccer_conmebol_copa_libertadores", name: "Football",   threeWay: true },
+  { key: "soccer_conmebol_copa_sudamericana", name: "Football",   threeWay: true },
+  { key: "soccer_china_superleague",          name: "Football",   threeWay: true },
+  { key: "soccer_japan_j_league",             name: "Football",   threeWay: true },
+  { key: "soccer_norway_eliteserien",         name: "Football",   threeWay: true },
+  { key: "soccer_sweden_allsvenskan",         name: "Football",   threeWay: true },
+  { key: "soccer_belgium_first_div",          name: "Football",   threeWay: true },
+  { key: "soccer_italy_serie_b",              name: "Football",   threeWay: true },
+  { key: "soccer_spain_segunda_division",     name: "Football",   threeWay: true },
+  // 🏀 Basketball
+  { key: "basketball_nba",                    name: "Basketball", threeWay: false },
+  { key: "basketball_wnba",                   name: "Basketball", threeWay: false },
+  // 🎾 Tennis
+  { key: "tennis_atp_french_open",            name: "Tennis",     threeWay: false },
+  { key: "tennis_wta_french_open",            name: "Tennis",     threeWay: false },
+  // 🏏 Cricket
+  { key: "cricket_ipl",                       name: "Cricket",    threeWay: false },
+  { key: "cricket_t20_blast",                 name: "Cricket",    threeWay: false },
+  { key: "cricket_test_match",                name: "Cricket",    threeWay: false },
+  // 🥊 MMA & Boxing
+  { key: "mma_mixed_martial_arts",            name: "MMA",        threeWay: false },
+  { key: "boxing_boxing",                     name: "Boxing",     threeWay: false },
+  // 🏒 Ice Hockey
+  { key: "icehockey_nhl",                     name: "Ice Hockey", threeWay: false },
+  // ⚾ Baseball
+  { key: "baseball_mlb",                      name: "Baseball",   threeWay: false },
+  // 🏈 American Football
+  { key: "americanfootball_nfl",              name: "NFL",        threeWay: false },
 ];
 
 // Bookmakers to compare
