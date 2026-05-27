@@ -51,7 +51,7 @@ const SPORTS = [
 ];
 
 // Bookmakers to compare
-const BOOKMAKERS = "bet365,pinnacle,williamhill,unibet,betway,betfair,1xbet,marathonbet,bwin,unibet";
+const BOOKMAKERS = "bet365,pinnacle,onexbet,betway,unibet,bwin,coolbet,nordicbet,betsson,sport888";
 
 // ─── FETCH ODDS FOR ONE SPORT ─────────────────────────────────────────────────
 async function fetchSportOdds(sport) {
